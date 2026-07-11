@@ -144,6 +144,10 @@ module Opencode
       execute(request)
     end
 
+    def update_session(session_id, permissions:)
+      patch("/session/#{session_id}", { permission: permissions })
+    end
+
     def children(session_id)
       uri = build_uri("/session/#{session_id}/children")
       request = Net::HTTP::Get.new(uri)
@@ -430,6 +434,13 @@ module Opencode
     def post(path, body)
       uri = build_uri(path)
       request = Net::HTTP::Post.new(uri)
+      request.body = body.to_json
+      execute(request)
+    end
+
+    def patch(path, body)
+      uri = build_uri(path)
+      request = Net::HTTP::Patch.new(uri)
       request.body = body.to_json
       execute(request)
     end

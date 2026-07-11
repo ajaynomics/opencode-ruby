@@ -53,6 +53,24 @@ class SmokeTest < Minitest::Test
     assert_equal SESSION_ID, response[:id]
   end
 
+  def test_update_session_patches_permissions_and_returns_the_updated_session
+    permissions = [
+      { permission: "skill", pattern: "*", action: "deny" },
+      { permission: "skill", pattern: "core-details", action: "allow" }
+    ]
+
+    stub_request(:patch, "#{BASE}/session/#{SESSION_ID}")
+      .with(body: { permission: permissions }.to_json)
+      .to_return(status: 200, body: { id: SESSION_ID, permission: permissions }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    response = @client.update_session(SESSION_ID, permissions: permissions)
+
+    assert_equal SESSION_ID, response[:id]
+    assert_equal permissions, response[:permission]
+    assert_requested :patch, "#{BASE}/session/#{SESSION_ID}", times: 1
+  end
+
   def test_send_message_async_returns_empty_body
     stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
       .to_return(status: 204, body: "")

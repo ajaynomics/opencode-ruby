@@ -72,6 +72,17 @@ result = client.send_message(session_id, "Quick yes/no: is Ruby fun?")
 # result is the OpenCode response hash; see API docs for fields.
 ```
 
+### Updating session permissions
+
+```ruby
+client.update_session(session_id, permissions: permission_rules)
+```
+
+OpenCode appends PATCHed permission rules and evaluates the last matching
+rule. Hosts should send a complete ordered policy and fingerprint it so the
+same policy is not appended on every turn. This endpoint requires OpenCode
+1.16.1 or newer; the rest of the client remains compatible with 1.15.
+
 ### Lower-level event firehose
 
 If you need raw SSE events (every server tick, todo update, prompt asked/replied), use `stream_events` directly:
@@ -155,7 +166,7 @@ bundle install
 bundle exec rake test
 ```
 
-12-test smoke covers Client end-to-end against WebMock-stubbed OpenCode endpoints.
+16-test smoke covers Client end-to-end against WebMock-stubbed OpenCode endpoints.
 
 ## License
 

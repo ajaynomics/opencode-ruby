@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.1.alpha3 - 2026-07-10
+
+### Added
+
+- `Opencode::Client#update_session` for applying permission rules through
+  OpenCode's session PATCH endpoint. OpenCode appends these rules, so hosts
+  should fingerprint their ordered policy and call this only when it changes.
+
 ## 0.0.1.alpha2 — 2026-05-20
 
 ### Added
