@@ -88,7 +88,7 @@ class SmokeTest < Minitest::Test
         properties: { sessionID: SESSION_ID, partID: "p1", field: "text", delta: "hello " } },
       { type: "message.part.delta",
         properties: { sessionID: SESSION_ID, partID: "p1", field: "text", delta: "world" } },
-      { type: "session.idle", properties: { sessionID: SESSION_ID } }
+      { type: "session.status", properties: { sessionID: SESSION_ID, status: { type: "idle" } } }
     ].map { |e| "data: #{e.to_json}\n\n" }.join
 
     stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
@@ -131,6 +131,59 @@ class SmokeTest < Minitest::Test
 
     reply = @client.stream(SESSION_ID, "ping")
     assert_equal "ack", reply.full_text
+  end
+
+  def test_stream_merges_a_multi_assistant_tool_loop_without_duplicate_text
+    stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
+      .to_return(status: 204, body: "")
+
+    skill_part = {
+      id: "p_skill", sessionID: SESSION_ID, messageID: "m_skill",
+      type: "tool", tool: "skill", callID: "call_skill",
+      state: { status: "completed", input: { name: "travelwolf-itinerary" }, output: "loaded" }
+    }
+    task_part = {
+      id: "p_task", sessionID: SESSION_ID, messageID: "m_task",
+      type: "tool", tool: "task", callID: "call_task",
+      state: {
+        status: "completed",
+        input: { subagent_type: "itinerary-planner" },
+        output: "{\"days\":[]}",
+        metadata: { sessionId: "ses_child" }
+      }
+    }
+    sse = [
+      { type: "todo.updated", properties: { sessionID: SESSION_ID, todos: [] } },
+      { type: "message.part.updated", properties: { sessionID: SESSION_ID, part: skill_part } },
+      { type: "message.part.updated", properties: { sessionID: SESSION_ID, part: task_part } },
+      { type: "message.part.delta",
+        properties: { sessionID: SESSION_ID, partID: "p_text", field: "text", delta: "SUBAGENT_OK" } },
+      { type: "message.part.delta",
+        properties: { sessionID: SESSION_ID, partID: "p_text_replay", field: "text", delta: "SUBAGENT_OK" } },
+      { type: "session.status", properties: { sessionID: SESSION_ID, status: { type: "idle" } } }
+    ].map { |event| "data: #{event.to_json}\n\n" }.join
+
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(status: 200, body: sse,
+                 headers: { "Content-Type" => "text/event-stream" })
+
+    exchange = [
+      { info: { role: "user" }, parts: [ { type: "text", text: "previous" } ] },
+      { info: { role: "assistant" }, parts: [ { type: "text", text: "previous answer" } ] },
+      { info: { role: "user" }, parts: [ { type: "text", text: "plan" } ] },
+      { info: { role: "assistant" }, parts: [ skill_part ] },
+      { info: { role: "assistant" }, parts: [ task_part ] },
+      { info: { role: "assistant" }, parts: [ { type: "text", text: "SUBAGENT_OK" } ] }
+    ]
+    stub_request(:get, "#{BASE}/session/#{SESSION_ID}/message")
+      .to_return(status: 200, body: exchange.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    reply = @client.stream(SESSION_ID, "plan", stream_timeout: 1)
+
+    assert_equal "SUBAGENT_OK", reply.full_text
+    assert_equal %w[todowrite skill task], reply.tool_parts.map { |part| part.fetch("tool") }
+    assert_equal "ses_child", reply.tool_parts.last.dig("metadata", "sessionId")
   end
 
   def test_connection_refused_raises_ConnectionError

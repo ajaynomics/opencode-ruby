@@ -89,7 +89,7 @@ If you need raw SSE events (every server tick, todo update, prompt asked/replied
 
 ```ruby
 client.stream_events(session_id: session_id) do |event|
-  puts event[:type] # "message.part.delta", "todo.updated", "session.idle", ...
+  puts event[:type] # "message.part.delta", "todo.updated", "session.status", ...
 end
 ```
 
@@ -112,7 +112,7 @@ begin
 rescue Opencode::ConnectionError      # server unreachable
 rescue Opencode::TimeoutError         # client-side timeout
 rescue Opencode::SessionNotFoundError # 404 on a session
-rescue Opencode::StaleSessionError    # session.idle never arrived
+rescue Opencode::StaleSessionError    # no session event arrived after the prompt
 rescue Opencode::IdleStreamError      # mid-turn SSE wedge
 rescue Opencode::ServerError          # 5xx
 rescue Opencode::BadRequestError      # 4xx other than 404

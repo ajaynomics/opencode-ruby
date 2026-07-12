@@ -27,7 +27,7 @@ module Opencode
     def self.extract_tool_summary(response_body)
       parts = response_body[:parts] || []
       parts
-        .select { |p| p[:type] == "tool" && p.dig(:state, :status).in?(TERMINAL_STATUSES) }
+        .select { |p| p[:type] == "tool" && TERMINAL_STATUSES.include?(p.dig(:state, :status)) }
         .map { |p| build_tool_summary(p) }
     end
 
@@ -42,7 +42,7 @@ module Opencode
           { "type" => "reasoning", "content" => part[:text] }
         when "tool"
           status = part.dig(:state, :status)
-          next unless status.in?(TERMINAL_STATUSES)
+          next unless TERMINAL_STATUSES.include?(status)
 
           build_tool_summary(part)
         else

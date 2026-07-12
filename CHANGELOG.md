@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.1.alpha4 - 2026-07-12
+
+### Fixed
+
+- End SSE streams on current OpenCode `session.status` idle events while
+  retaining compatibility with legacy `session.idle` events.
+- Reconcile every assistant message in the current user turn after multi-step
+  tool loops, preserving stream-only parts without duplicating final text.
+- Parse terminal tool parts in standalone Ruby clients without relying on the
+  Rails-loaded `Object#in?` extension.
+
 ## 0.0.1.alpha3 - 2026-07-10
 
 ### Added

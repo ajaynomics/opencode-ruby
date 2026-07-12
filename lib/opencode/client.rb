@@ -237,8 +237,10 @@ module Opencode
     ].freeze
 
     # Opens SSE connection to GET /event, yields parsed events filtered by session_id.
-    # Blocks until session goes idle or timeout, reconnecting across dropped
-    # event-stream connections.
+    # Blocks until the session reports idle or timeout, reconnecting across
+    # dropped event-stream connections. Current OpenCode emits
+    # `session.status` with `status.type == "idle"`; older versions emitted the
+    # standalone `session.idle` event, so both remain terminal.
     #
     # first_event_timeout: seconds to wait for a session-specific event before
     # declaring the session stale. Server heartbeats don't count — they're global
@@ -345,13 +347,14 @@ module Opencode
                 # the reaper doesn't kill it mid-wait.
                 on_activity_tick&.call(event)
                 block.call(event)
-                return if event[:type] == "session.idle"
+                return if terminal_session_event?(event)
               end
             end
           end
         rescue *TRANSIENT_SSE_ERRORS
           # Treat transport-level SSE disconnects like clean EOF: reconnect
-          # until session.idle, the overall timeout, or first-event timeout.
+          # until an idle session event, the overall timeout, or first-event
+          # timeout.
         ensure
           begin
             http&.finish if http&.started?
@@ -385,13 +388,16 @@ module Opencode
     # the caller's reply is still a usable Result either way.
     def merge_final_exchange(session_id, reply)
       exchange = get_messages(session_id)
-      last_assistant = Array(exchange).reverse_each.find do |message|
-        message.dig(:info, :role) == "assistant"
-      end
-      return unless last_assistant
+      polled = current_turn_parts(exchange)
+      return if polled.empty?
 
-      polled = Opencode::ResponseParser.extract_interleaved_parts(last_assistant)
-      reply.sync_recovered_parts(polled) if polled.any?
+      merged = merge_stream_only_parts(reply.result.parts_json, polled)
+      reply.sync_recovered_parts(merged)
+      # sync_recovered_parts intentionally never deletes live parts because it
+      # is also used during mid-stream recovery. This is the terminal poll, so
+      # the wire snapshot is authoritative: remove any replayed trailing wire
+      # part after observers have seen recovered additions/updates.
+      reply.replace_parts(merged) unless reply.result.parts_json == merged
     rescue Opencode::Error
       # Stream's result is still complete; the merge was a polish, not a
       # requirement.
@@ -406,6 +412,45 @@ module Opencode
       raise TimeoutError, "SSE stream timed out after #{timeout}s" if now > deadline
 
       deadline
+    end
+
+    def terminal_session_event?(event)
+      return true if event[:type] == "session.idle"
+      return false unless event[:type] == "session.status"
+
+      status = event.dig(:properties, :status)
+      status = status[:type] || status["type"] if status.is_a?(Hash)
+      status == "idle"
+    end
+
+    # OpenCode persists one assistant message per model step. A tool loop can
+    # therefore produce several assistant messages for one user turn (for
+    # example skill -> task -> final text). Reconcile the complete current turn
+    # instead of aligning the live parts array with only the last assistant
+    # message, which corrupts tool parts and duplicates final text.
+    def current_turn_parts(exchange)
+      messages = Array(exchange)
+      last_user_index = messages.rindex { |message| message.dig(:info, :role) == "user" }
+      current_turn = last_user_index ? messages.drop(last_user_index + 1) : messages
+
+      current_turn
+        .select { |message| message.dig(:info, :role) == "assistant" }
+        .flat_map { |message| Opencode::ResponseParser.extract_interleaved_parts(message) }
+    end
+
+    def merge_stream_only_parts(stream_parts, wire_parts)
+      remaining_wire = Array(wire_parts).dup
+      merged = []
+
+      Array(stream_parts).each do |part|
+        if Opencode::PartSource.stream_only?(part)
+          merged << part
+        elsif remaining_wire.any?
+          merged << remaining_wire.shift
+        end
+      end
+
+      merged.concat(remaining_wire)
     end
 
     def prompt_payload(text, parts:, model:, agent:, system:, message_id:, no_reply:, tools:, format:, variant:)
