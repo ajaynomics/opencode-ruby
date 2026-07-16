@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.1.alpha5 - 2026-07-15
+
+### Added
+
+- Extend `Opencode::Client#create_session` with OpenCode's native parent,
+  agent, model, metadata, and workspace fields while preserving the existing
+  title and permission call shape. Session model strings are encoded with the
+  session endpoint's `{ providerID, id }` shape rather than the message
+  endpoint's `{ providerID, modelID }` shape.
+
 ## 0.0.1.alpha4 - 2026-07-12
 
 ### Fixed

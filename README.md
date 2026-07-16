@@ -48,6 +48,27 @@ Multi-tenant apps construct multiple clients with different `base_url`s — each
 
 ## Core API
 
+### Configured and parent-linked sessions
+
+OpenCode can create a session under an existing parent and select its agent,
+model, metadata, workspace, and permission policy in the same request:
+
+```ruby
+child = client.create_session(
+  title: "Destination curator",
+  parent_id: parent_session_id,
+  agent: "destination-list-curator",
+  model: "openai/gpt-5.5",
+  metadata: { run_id: "9" },
+  workspace_id: workspace_id,
+  permissions: permission_rules
+)
+```
+
+Model strings use OpenCode's `provider/model` form; a preformatted model hash
+with `providerID` and `id` keys is also accepted. These configured-session
+fields require OpenCode 1.16.1 or newer.
+
 ### Streaming (the headline)
 
 ```ruby
@@ -166,7 +187,7 @@ bundle install
 bundle exec rake test
 ```
 
-16-test smoke covers Client end-to-end against WebMock-stubbed OpenCode endpoints.
+The smoke suite covers Client end-to-end against WebMock-stubbed OpenCode endpoints.
 
 ## License
 

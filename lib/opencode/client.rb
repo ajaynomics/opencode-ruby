@@ -25,8 +25,24 @@ module Opencode
       @workspace = workspace
     end
 
-    def create_session(title: nil, permissions: nil)
-      body = { title: title, permission: permissions }.compact
+    def create_session(
+      title: nil,
+      permissions: nil,
+      parent_id: nil,
+      agent: nil,
+      model: nil,
+      metadata: nil,
+      workspace_id: nil
+    )
+      body = {
+        title: title,
+        permission: permissions,
+        parentID: parent_id,
+        agent: agent,
+        model: format_session_model(model),
+        metadata: metadata,
+        workspaceID: workspace_id
+      }.compact
       post("/session", body)
     end
 
@@ -474,6 +490,14 @@ module Opencode
 
       provider, model_id = model.split("/", 2)
       { providerID: provider, modelID: model_id }
+    end
+
+    def format_session_model(model)
+      return nil unless model
+      return model if model.is_a?(Hash)
+
+      provider, model_id = model.split("/", 2)
+      { providerID: provider, id: model_id }
     end
 
     def post(path, body)

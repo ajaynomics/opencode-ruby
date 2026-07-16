@@ -46,11 +46,57 @@ class SmokeTest < Minitest::Test
 
   def test_create_session_returns_session_id
     stub_request(:post, "#{BASE}/session")
+      .with(body: { title: "smoke", permission: [] }.to_json)
       .to_return(status: 200, body: { id: SESSION_ID, title: "smoke" }.to_json,
                  headers: { "Content-Type" => "application/json" })
 
     response = @client.create_session(title: "smoke", permissions: [])
     assert_equal SESSION_ID, response[:id]
+  end
+
+  def test_create_session_sends_native_child_and_configuration_fields
+    permissions = [ { permission: "skill", pattern: "*", action: "deny" } ]
+    expected_body = {
+      title: "curator",
+      permission: permissions,
+      parentID: "ses_parent",
+      agent: "destination-list-curator",
+      model: { providerID: "openrouter", id: "anthropic/claude-sonnet-4" },
+      metadata: { run: "9" },
+      workspaceID: "wrk_1"
+    }
+
+    stub_request(:post, "#{BASE}/session")
+      .with(body: expected_body.to_json)
+      .to_return(status: 200, body: { id: SESSION_ID }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    response = @client.create_session(
+      title: "curator",
+      permissions: permissions,
+      parent_id: "ses_parent",
+      agent: "destination-list-curator",
+      model: "openrouter/anthropic/claude-sonnet-4",
+      metadata: { run: "9" },
+      workspace_id: "wrk_1"
+    )
+
+    assert_equal SESSION_ID, response[:id]
+    assert_requested :post, "#{BASE}/session", body: expected_body.to_json, times: 1
+  end
+
+  def test_create_session_preserves_a_preformatted_model
+    model = { providerID: "openai", id: "gpt-5.5", variant: "high" }
+
+    stub_request(:post, "#{BASE}/session")
+      .with(body: { model: model }.to_json)
+      .to_return(status: 200, body: { id: SESSION_ID }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    response = @client.create_session(model: model)
+
+    assert_equal SESSION_ID, response[:id]
+    assert_requested :post, "#{BASE}/session", body: { model: model }.to_json, times: 1
   end
 
   def test_update_session_patches_permissions_and_returns_the_updated_session
