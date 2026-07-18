@@ -67,7 +67,9 @@ child = client.create_session(
 
 Model strings use OpenCode's `provider/model` form; a preformatted model hash
 with `providerID` and `id` keys is also accepted. These configured-session
-fields require OpenCode 1.16.1 or newer.
+fields first appeared in OpenCode 1.16.1. That is an API-introduction note,
+not evidence that every later server is compatible; use the
+[certified compatibility evidence](#compatibility) for deployment choices.
 
 ### Streaming (the headline)
 
@@ -106,8 +108,9 @@ client.update_session(session_id, permissions: permission_rules)
 
 OpenCode appends PATCHed permission rules and evaluates the last matching
 rule. Hosts should send a complete ordered policy and fingerprint it so the
-same policy is not appended on every turn. This endpoint requires OpenCode
-1.16.1 or newer; the rest of the client remains compatible with 1.15.
+same policy is not appended on every turn. This endpoint first appeared in
+OpenCode 1.16.1; that version floor describes endpoint availability, not
+compatibility with every later server.
 
 ### Lower-level event firehose
 
@@ -199,8 +202,28 @@ Want every OpenCode endpoint auto-generated from the OpenAPI spec? Use [`opencod
 ## Compatibility
 
 - Ruby ≥ 3.2
-- OpenCode server ≥ 1.15
 - Runtime dependency: `activesupport (>= 6.1)` — *not* Rails. ActiveSupport is a standalone helpers gem (`blank?`, `present?`, `presence`, `truncate`, etc.).
+
+OpenCode server compatibility is evidence-based, not an open-ended SemVer
+promise. OpenCode's HTTP, SSE, and runtime behavior can change independently
+of a numeric version floor, so this gem does not infer compatibility from a
+constraint such as `>= 1.15`.
+
+Use the [OpenCode compatibility corpus](https://github.com/ajaynomics/opencode-compat)
+as the source of current evidence. Its
+[image matrix](https://github.com/ajaynomics/opencode-compat/blob/main/manifests/image-matrix.json)
+records the exact gem commit and immutable OpenCode OCI digest exercised by
+the `ruby-rest-sse` profile. Its
+[runtime tuples](https://github.com/ajaynomics/opencode-compat/blob/main/manifests/runtime-tuples.json)
+add the exact consumer commit and canary evidence needed for promotion and
+rollback. A version label or image tag is provenance only, never the execution
+coordinate.
+
+A combination absent from passing evidence is **unverified**, not necessarily
+incompatible. Run the corpus against the exact gem, image digest, and consumer
+commit before adopting or promoting it. See the
+[certification policy](https://github.com/ajaynomics/opencode-compat/blob/main/docs/certification.md)
+for the full process.
 
 ## Development
 
@@ -213,10 +236,13 @@ The smoke suite covers Client end-to-end against WebMock-stubbed OpenCode
 endpoints, including subscription-before-prompt ordering and
 reconnect-without-repost.
 
-Releases use RubyGems trusted publishing. After the repository's
-`release.yml` workflow is registered as a trusted publisher with the `release`
-environment, pushing a `v*` tag builds, attests, and publishes the gem without
-a long-lived RubyGems API key.
+The repository contains a tag-triggered `release.yml` workflow intended for
+RubyGems trusted publishing, but its RubyGems trusted-publisher registration is
+not configured as of `0.0.1.alpha7`; that release was published manually. A
+`v*` tag push therefore does not currently guarantee publication. Before a
+future release, verify the RubyGems registry result explicitly. Once the
+workflow is registered as a trusted publisher for the `release` environment,
+it can build, attest, and publish without a long-lived RubyGems API key.
 
 ## License
 
