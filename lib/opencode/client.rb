@@ -131,21 +131,35 @@ module Opencode
       on_activity_tick: nil,
       &block
     )
-      send_message_async(
-        session_id, text,
-        model: model, agent: agent, system: system, message_id: message_id
-      )
-
       reply = Opencode::Reply.new
       reply.add_observer(StreamBlockObserver.new(&block)) if block_given?
 
-      stream_events(
+      # Opening the event stream after prompt_async leaves a race where a fast
+      # turn can emit (and finish) before the client is subscribed. Wait for
+      # OpenCode's initial server.connected SSE frame, then submit the prompt
+      # exactly once. Reconnects invoke on_subscribed again, so mark the attempt
+      # before the POST: an ambiguous prompt response must never cause the same
+      # turn to be submitted twice.
+      prompt_attempted = false
+      on_subscribed = lambda do
+        next false if prompt_attempted
+
+        prompt_attempted = true
+        send_message_async(
+          session_id, text,
+          model: model, agent: agent, system: system, message_id: message_id
+        )
+        true
+      end
+
+      consume_event_stream(
         session_id: session_id,
         timeout: stream_timeout,
         first_event_timeout: first_event_timeout,
         idle_stream_timeout: idle_stream_timeout,
         reply: reply,
-        on_activity_tick: on_activity_tick
+        on_activity_tick: on_activity_tick,
+        on_subscribed: on_subscribed
       ) do |event|
         reply.apply(event)
       end
@@ -285,6 +299,20 @@ module Opencode
     def stream_events(session_id:, timeout: 600, first_event_timeout: 120,
                        idle_stream_timeout: nil,
                        reply: nil, on_activity_tick: nil, &block)
+      consume_event_stream(
+        session_id: session_id,
+        timeout: timeout,
+        first_event_timeout: first_event_timeout,
+        idle_stream_timeout: idle_stream_timeout,
+        reply: reply,
+        on_activity_tick: on_activity_tick,
+        &block
+      )
+    end
+
+    private def consume_event_stream(session_id:, timeout:, first_event_timeout:,
+                                     idle_stream_timeout:, reply:, on_activity_tick:,
+                                     on_subscribed: nil, &block)
       uri = build_uri("/event")
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
       first_event_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + first_event_timeout
@@ -319,6 +347,8 @@ module Opencode
         http.open_timeout = 10
         http.read_timeout = 30
 
+        subscription_callback_error = nil
+        subscription_ready = on_subscribed.nil?
         begin
           buffer = String.new
 
@@ -352,6 +382,36 @@ module Opencode
                 event = parse_sse_event(raw_event, session_id)
                 next unless event
 
+                unless subscription_ready
+                  # Every supported OpenCode server starts /event with this
+                  # frame. Receiving it proves the stream body is flowing; on
+                  # current servers the bus listener is registered eagerly,
+                  # and on older lazy-stream servers it is the strongest
+                  # available readiness handshake before prompting.
+                  next unless event[:type] == "server.connected"
+
+                  begin
+                    turn_started = on_subscribed.call
+                  rescue StandardError => error
+                    # Prompt submission happens inside the open SSE response.
+                    # Do not mistake its transport failure for an SSE disconnect
+                    # and hide it behind a reconnect/first-event timeout.
+                    subscription_callback_error = error
+                    raise
+                  end
+                  if turn_started
+                    # Before this fix stream_events began only after the prompt
+                    # POST returned. Preserve those timeout semantics: the turn
+                    # and first-session-event windows begin after prompt_async
+                    # succeeds, not while establishing the readiness handshake.
+                    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+                    deadline = started_at + timeout
+                    first_event_deadline = started_at + first_event_timeout
+                    last_meaningful_event_at = started_at
+                  end
+                  subscription_ready = true
+                end
+
                 unless event[:type]&.start_with?("server.")
                   received_session_event = true
                   last_meaningful_event_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -368,6 +428,8 @@ module Opencode
             end
           end
         rescue *TRANSIENT_SSE_ERRORS
+          raise if subscription_callback_error
+
           # Treat transport-level SSE disconnects like clean EOF: reconnect
           # until an idle session event, the overall timeout, or first-event
           # timeout.

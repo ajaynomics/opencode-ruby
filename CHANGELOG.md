@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.1.alpha6 - 2026-07-18
+
+### Fixed
+
+- Make `Opencode::Client#stream` wait for OpenCode's initial
+  `server.connected` SSE readiness frame before submitting `prompt_async`,
+  closing the fast-response window where a turn could emit events before the
+  client was listening.
+- Keep prompt submission at-most-once across automatic SSE reconnects. A
+  reconnect now reopens only the event stream; it never posts the user prompt
+  again, and prompt transport failures remain visible to the caller.
+
 ## 0.0.1.alpha5 - 2026-07-15
 
 ### Added

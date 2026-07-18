@@ -11,6 +11,7 @@ class SmokeTest < Minitest::Test
   BASE = "http://opencode.test"
   PASSWORD = "test-secret"
   SESSION_ID = "ses_smoke_1"
+  CONNECTED_EVENT = { type: "server.connected", properties: {} }.freeze
 
   def setup
     @client = Opencode::Client.new(
@@ -130,6 +131,7 @@ class SmokeTest < Minitest::Test
       .to_return(status: 204, body: "")
 
     sse = [
+      CONNECTED_EVENT,
       { type: "message.part.delta",
         properties: { sessionID: SESSION_ID, partID: "p1", field: "text", delta: "hello " } },
       { type: "message.part.delta",
@@ -157,11 +159,164 @@ class SmokeTest < Minitest::Test
     refute_empty parts_yielded
   end
 
+  def test_stream_waits_for_server_connected_before_posting_the_prompt
+    request_order = []
+    connection_count = 0
+    terminal_event = {
+      type: "session.status",
+      properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+    }
+
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return do
+        connection_count += 1
+        request_order << :sse_accepted
+        events = if connection_count == 1
+          [ { type: "server.heartbeat", properties: {} } ]
+        else
+          [ CONNECTED_EVENT, terminal_event ]
+        end
+        {
+          status: 200,
+          body: events.map { |event| "data: #{event.to_json}\n\n" }.join,
+          headers: { "Content-Type" => "text/event-stream" }
+        }
+      end
+
+    stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
+      .to_return do
+        request_order << :prompt
+        { status: 204, body: "" }
+      end
+
+    stub_request(:get, "#{BASE}/session/#{SESSION_ID}/message")
+      .to_return(status: 200, body: [].to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    @client.stream(SESSION_ID, "ping", stream_timeout: 1, first_event_timeout: 1)
+
+    assert_equal [ :sse_accepted, :sse_accepted, :prompt ], request_order
+  end
+
+  def test_stream_does_not_post_when_sse_subscription_is_rejected
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(status: 503, body: "unavailable")
+    prompt = stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
+      .to_return(status: 204, body: "")
+
+    error = assert_raises(Opencode::ServerError) do
+      @client.stream(SESSION_ID, "ping", stream_timeout: 1, first_event_timeout: 1)
+    end
+
+    assert_match "SSE connection failed: HTTP 503", error.message
+    assert_not_requested prompt
+  end
+
+  def test_stream_surfaces_prompt_timeout_without_reconnecting
+    event_stream = stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(status: 200, body: "data: #{CONNECTED_EVENT.to_json}\n\n",
+                 headers: { "Content-Type" => "text/event-stream" })
+    prompt = stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
+      .to_raise(Net::ReadTimeout.new("prompt timed out"))
+
+    error = assert_raises(Opencode::TimeoutError) do
+      @client.stream(SESSION_ID, "ping", stream_timeout: 1, first_event_timeout: 1)
+    end
+
+    assert_match "OpenCode timeout after 5s", error.message
+    assert_requested event_stream, times: 1
+    assert_requested prompt, times: 1
+  end
+
+  def test_stream_reconnects_without_reposting_the_prompt
+    first_connection = [
+      CONNECTED_EVENT,
+      { type: "server.heartbeat", properties: {} }
+    ]
+    second_connection = [
+      CONNECTED_EVENT,
+      {
+        type: "message.part.delta",
+        properties: { sessionID: SESSION_ID, partID: "p1", field: "text", delta: "once" }
+      },
+      {
+        type: "session.status",
+        properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+      }
+    ]
+
+    event_stream = stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(
+        {
+          status: 200,
+          body: first_connection.map { |event| "data: #{event.to_json}\n\n" }.join,
+          headers: { "Content-Type" => "text/event-stream" }
+        },
+        {
+          status: 200,
+          body: second_connection.map { |event| "data: #{event.to_json}\n\n" }.join,
+          headers: { "Content-Type" => "text/event-stream" }
+        }
+      )
+    prompt = stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
+      .to_return(status: 204, body: "")
+    stub_request(:get, "#{BASE}/session/#{SESSION_ID}/message")
+      .to_return(status: 200, body: [].to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    reply = @client.stream(SESSION_ID, "ping", stream_timeout: 1, first_event_timeout: 1)
+
+    assert_equal "once", reply.full_text
+    assert_requested event_stream, times: 2
+    assert_requested prompt, times: 1
+  end
+
+  def test_stream_events_preserves_question_and_permission_wait_state
+    events = [
+      {
+        type: "question.asked",
+        properties: { id: "que_1", sessionID: SESSION_ID, questions: [] }
+      },
+      {
+        type: "question.replied",
+        properties: { requestID: "que_1", sessionID: SESSION_ID, answers: [ [ "yes" ] ] }
+      },
+      {
+        type: "permission.asked",
+        properties: { id: "per_1", sessionID: SESSION_ID, permission: "bash" }
+      },
+      {
+        type: "permission.replied",
+        properties: { requestID: "per_1", sessionID: SESSION_ID, reply: "once" }
+      },
+      {
+        type: "session.status",
+        properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+      }
+    ]
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(
+        status: 200,
+        body: events.map { |event| "data: #{event.to_json}\n\n" }.join,
+        headers: { "Content-Type" => "text/event-stream" }
+      )
+
+    reply = Opencode::Reply.new
+    wait_states = []
+    @client.stream_events(session_id: SESSION_ID, reply: reply) do |event|
+      reply.apply(event)
+      wait_states << reply.prompt_blocked?
+    end
+
+    assert_equal [ true, false, true, false, false ], wait_states
+  end
+
   def test_stream_block_is_optional
     stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
       .to_return(status: 204, body: "")
 
     sse = [
+      CONNECTED_EVENT,
       { type: "message.part.delta",
         properties: { sessionID: SESSION_ID, partID: "p1", field: "text", delta: "ack" } },
       { type: "session.idle", properties: { sessionID: SESSION_ID } }
@@ -199,6 +354,7 @@ class SmokeTest < Minitest::Test
       }
     }
     sse = [
+      CONNECTED_EVENT,
       { type: "todo.updated", properties: { sessionID: SESSION_ID, todos: [] } },
       { type: "message.part.updated", properties: { sessionID: SESSION_ID, part: skill_part } },
       { type: "message.part.updated", properties: { sessionID: SESSION_ID, part: task_part } },
