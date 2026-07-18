@@ -119,6 +119,23 @@ client.stream_events(session_id: session_id) do |event|
 end
 ```
 
+Orchestrators that submit their own async prompt must do so through
+`on_subscribed`; the callback runs only after the first `server.connected`
+frame and at most once across automatic reconnects:
+
+```ruby
+client.stream_events(
+  session_id: session_id,
+  on_subscribed: -> { client.send_message_async(session_id, prompt) }
+) do |event|
+  reply.apply(event)
+end
+```
+
+If the callback raises, `stream_events` propagates that error and does not
+retry it. This is intentional: a timed-out prompt response is ambiguous, so
+reposting could duplicate the model turn and its cost.
+
 ### Interactive prompts
 
 When the agent uses the `question` or `permission` tools, opencode emits `question.asked` / `permission.asked` events. Answer them via:

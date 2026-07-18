@@ -285,6 +285,13 @@ module Opencode
     # without nuking real reasoning. Callers that know their agent is
     # short-prompt + fast can pass a lower value.
     #
+    # on_subscribed: optional callable invoked at most once, after the first
+    # `server.connected` frame proves the SSE response body is flowing. This
+    # is the safe place for higher-level orchestrators to submit prompt_async;
+    # reconnects wait for their own connected frame but never invoke it again.
+    # A raised callback error is propagated directly and is never treated as
+    # a reconnectable SSE transport failure.
+    #
     # idle_stream_timeout: seconds to wait BETWEEN meaningful events once
     # the session has started producing them. Default nil = no check
     # (preserves the overall `timeout` ceiling behavior). Opt-in heartbeat
@@ -298,7 +305,7 @@ module Opencode
     # translate into a user-visible error / retry affordance.
     def stream_events(session_id:, timeout: 600, first_event_timeout: 120,
                        idle_stream_timeout: nil,
-                       reply: nil, on_activity_tick: nil, &block)
+                       reply: nil, on_activity_tick: nil, on_subscribed: nil, &block)
       consume_event_stream(
         session_id: session_id,
         timeout: timeout,
@@ -306,6 +313,7 @@ module Opencode
         idle_stream_timeout: idle_stream_timeout,
         reply: reply,
         on_activity_tick: on_activity_tick,
+        on_subscribed: on_subscribed,
         &block
       )
     end
@@ -318,6 +326,7 @@ module Opencode
       first_event_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + first_event_timeout
       received_session_event = false
       last_meaningful_event_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      subscription_callback_attempted = on_subscribed.nil?
 
       loop do
         now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -390,14 +399,22 @@ module Opencode
                   # available readiness handshake before prompting.
                   next unless event[:type] == "server.connected"
 
-                  begin
-                    turn_started = on_subscribed.call
-                  rescue StandardError => error
-                    # Prompt submission happens inside the open SSE response.
-                    # Do not mistake its transport failure for an SSE disconnect
-                    # and hide it behind a reconnect/first-event timeout.
-                    subscription_callback_error = error
-                    raise
+                  turn_started = false
+                  unless subscription_callback_attempted
+                    # Mark the attempt before invoking the callback. A timeout
+                    # can mean the prompt reached OpenCode even though its HTTP
+                    # response did not reach us; retrying would duplicate the
+                    # turn. The caller receives the original error instead.
+                    subscription_callback_attempted = true
+                    begin
+                      turn_started = on_subscribed.call
+                    rescue StandardError => error
+                      # Prompt submission happens inside the open SSE response.
+                      # Do not mistake its transport failure for an SSE disconnect
+                      # and hide it behind a reconnect/first-event timeout.
+                      subscription_callback_error = error
+                      raise
+                    end
                   end
                   if turn_started
                     # Before this fix stream_events began only after the prompt

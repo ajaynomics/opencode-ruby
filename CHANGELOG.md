@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.1.alpha7 - 2026-07-18
+
+### Fixed
+
+- Add an at-most-once `on_subscribed` hook to the lower-level
+  `Opencode::Client#stream_events` API. Higher-level orchestrators can now
+  wait for `server.connected` before submitting `prompt_async` without
+  abandoning their own Reply observers, persistence, or recovery pipeline.
+- Propagate subscription-hook failures directly and never invoke the hook
+  again on SSE reconnect. Ambiguous prompt transport failures therefore
+  cannot silently become duplicate turns.
+
 ## 0.0.1.alpha6 - 2026-07-18
 
 ### Fixed
