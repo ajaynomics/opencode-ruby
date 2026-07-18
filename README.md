@@ -196,6 +196,11 @@ The smoke suite covers Client end-to-end against WebMock-stubbed OpenCode
 endpoints, including subscription-before-prompt ordering and
 reconnect-without-repost.
 
+Releases use RubyGems trusted publishing. After the repository's
+`release.yml` workflow is registered as a trusted publisher with the `release`
+environment, pushing a `v*` tag builds, attests, and publishes the gem without
+a long-lived RubyGems API key.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
