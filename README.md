@@ -86,6 +86,11 @@ reply.reasoning_text  # => the model's hidden reasoning, if any
 reply.parts_json      # => the full ordered parts array, ready for persistence
 ```
 
+`stream` waits for OpenCode's initial `server.connected` SSE readiness frame
+before it submits the asynchronous prompt. If the event connection drops
+afterward, the client reconnects only the subscription; it never reposts the
+prompt. This prevents both missed fast responses and duplicate turns.
+
 ### Synchronous send (no streaming)
 
 ```ruby
@@ -187,7 +192,9 @@ bundle install
 bundle exec rake test
 ```
 
-The smoke suite covers Client end-to-end against WebMock-stubbed OpenCode endpoints.
+The smoke suite covers Client end-to-end against WebMock-stubbed OpenCode
+endpoints, including subscription-before-prompt ordering and
+reconnect-without-repost.
 
 ## License
 
