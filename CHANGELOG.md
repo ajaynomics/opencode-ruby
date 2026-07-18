@@ -100,5 +100,7 @@ First public alpha. HTTP + SSE client for OpenCode REST API.
 ### Compatibility
 
 - Ruby ≥ 3.2
-- OpenCode server ≥ 1.15 (tested against the message bus schema in `packages/opencode/src/session/message-v2.ts`)
+- OpenCode targeted the then-current 1.15 message-bus shape. This historical
+  target was not a blanket SemVer compatibility guarantee; use the README's
+  current compatibility evidence for deployment decisions.
 - Runtime dependency: `activesupport (>= 6.1)` for `blank?`/`present?`/`presence`/`truncate`/`duplicable?`/`megabytes`. ActiveSupport is *not* Rails — it's a standalone helpers gem.
