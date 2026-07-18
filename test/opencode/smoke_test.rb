@@ -271,6 +271,70 @@ class SmokeTest < Minitest::Test
     assert_requested prompt, times: 1
   end
 
+  def test_stream_events_invokes_on_subscribed_once_after_connected_across_reconnects
+    order = []
+    connections = [
+      [ CONNECTED_EVENT, { type: "server.heartbeat", properties: {} } ],
+      [
+        CONNECTED_EVENT,
+        {
+          type: "session.status",
+          properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+        }
+      ]
+    ]
+
+    event_stream = stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return do
+        events = connections.shift or raise "unexpected third SSE connection"
+        order << :sse_accepted
+        {
+          status: 200,
+          body: events.map { |event| "data: #{event.to_json}\n\n" }.join,
+          headers: { "Content-Type" => "text/event-stream" }
+        }
+      end
+
+    subscribed_calls = 0
+    @client.stream_events(
+      session_id: SESSION_ID,
+      timeout: 1,
+      first_event_timeout: 1,
+      on_subscribed: -> {
+        subscribed_calls += 1
+        order << :prompt
+        true
+      }
+    ) { |_event| }
+
+    assert_equal 1, subscribed_calls
+    assert_equal [ :sse_accepted, :prompt, :sse_accepted ], order
+    assert_requested event_stream, times: 2
+  end
+
+  def test_stream_events_surfaces_on_subscribed_timeout_without_reconnecting
+    event_stream = stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(status: 200, body: "data: #{CONNECTED_EVENT.to_json}\n\n",
+                 headers: { "Content-Type" => "text/event-stream" })
+
+    calls = 0
+    error = assert_raises(Net::ReadTimeout) do
+      @client.stream_events(
+        session_id: SESSION_ID,
+        timeout: 1,
+        first_event_timeout: 1,
+        on_subscribed: -> {
+          calls += 1
+          raise Net::ReadTimeout, "ambiguous prompt response"
+        }
+      ) { |_event| }
+    end
+
+    assert_equal "Net::ReadTimeout with \"ambiguous prompt response\"", error.message
+    assert_equal 1, calls
+    assert_requested event_stream, times: 1
+  end
+
   def test_stream_events_preserves_question_and_permission_wait_state
     events = [
       {
