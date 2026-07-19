@@ -126,6 +126,57 @@ class SmokeTest < Minitest::Test
     assert_equal({}, response)
   end
 
+  def test_send_message_async_serializes_a_structured_child_prompt
+    schema = {
+      type: "object",
+      properties: {
+        requirement_suggestions: {
+          type: "array",
+          items: { type: "string" }
+        }
+      },
+      required: [ "requirement_suggestions" ],
+      additionalProperties: false
+    }
+    invocation_query =
+      "Complete the bounded structured request from the preloaded worker skill and immutable Rails context."
+    expected_body = {
+      messageID: "msg_worker_1",
+      parts: [ { type: "text", text: invocation_query } ],
+      agent: "destination-list-curator",
+      format: {
+        type: "json_schema",
+        schema: schema,
+        retryCount: 0
+      },
+      system: "Immutable Rails context"
+    }
+    serialized_body = nil
+
+    prompt = stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
+      .with(body: expected_body.to_json)
+      .to_return do |request|
+        serialized_body = request.body
+        { status: 204, body: "" }
+      end
+
+    @client.send_message_async(
+      SESSION_ID,
+      invocation_query,
+      agent: "destination-list-curator",
+      system: "Immutable Rails context",
+      message_id: "msg_worker_1",
+      format: {
+        type: "json_schema",
+        schema: schema,
+        retryCount: 0
+      }
+    )
+
+    assert_equal expected_body.to_json, serialized_body
+    assert_requested prompt, times: 1
+  end
+
   def test_stream_returns_typed_Reply_Result_with_full_text
     stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
       .to_return(status: 204, body: "")
