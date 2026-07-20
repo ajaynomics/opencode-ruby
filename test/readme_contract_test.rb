@@ -16,4 +16,9 @@ class ReadmeContractTest < Minitest::Test
     assert_includes README, "not configured as of `0.0.1.alpha7`"
     assert_includes README, "does not currently guarantee publication"
   end
+
+  def test_compatibility_documents_every_runtime_dependency
+    assert_includes README, "`activesupport (>= 6.1, < 9.0)`"
+    assert_includes README, "`marcel (~> 1.0)`"
+  end
 end

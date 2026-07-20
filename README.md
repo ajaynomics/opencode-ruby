@@ -202,7 +202,8 @@ Want every OpenCode endpoint auto-generated from the OpenAPI spec? Use [`opencod
 ## Compatibility
 
 - Ruby ≥ 3.2
-- Runtime dependency: `activesupport (>= 6.1)` — *not* Rails. ActiveSupport is a standalone helpers gem (`blank?`, `present?`, `presence`, `truncate`, etc.).
+- Runtime dependency: `activesupport (>= 6.1, < 9.0)` — *not* Rails. ActiveSupport is a standalone helpers gem (`blank?`, `present?`, `presence`, `truncate`, etc.).
+- Runtime dependency: `marcel (~> 1.0)` for artifact MIME type detection.
 
 OpenCode server compatibility is evidence-based, not an open-ended SemVer
 promise. OpenCode's HTTP, SSE, and runtime behavior can change independently

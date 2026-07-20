@@ -27,7 +27,7 @@ class WorkflowContractTest < Minitest::Test
       workflow_uses(workflow)
     end
 
-    assert_equal 5, action_uses.length
+    assert_equal 7, action_uses.length
     action_uses.each do |action_use|
       action, separator, revision = action_use.rpartition("@")
 

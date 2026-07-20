@@ -17,6 +17,10 @@ class ReleaseWorkflowTest < Minitest::Test
     workflow.fetch("jobs").fetch("push")
   end
 
+  def verify_job
+    workflow.fetch("jobs").fetch("verify")
+  end
+
   def test_release_job_is_inert_on_non_github_runners
     assert_equal "${{ github.server_url == 'https://github.com' }}", push_job.fetch("if")
   end
@@ -60,5 +64,16 @@ class ReleaseWorkflowTest < Minitest::Test
     refute_nil publish_index
     assert_operator test_index, :<, publish_index
     assert_equal "bundle exec rake test", steps.fetch(test_index).fetch("run")
+  end
+
+  def test_release_verifies_the_supported_matrix_and_installed_gem_before_publish
+    assert_equal %w[3.2 3.3 3.4 4.0], verify_job.dig("strategy", "matrix", "ruby")
+    assert_equal "verify", push_job.fetch("needs")
+
+    commands = verify_job.fetch("steps").filter_map { |step| step["run"] }.join("\n")
+    assert_includes commands, "bundle exec rake test"
+    assert_includes commands, "gem build opencode-ruby.gemspec"
+    assert_includes commands, "gem install opencode-ruby-*.gem --no-document"
+    assert_includes commands, "ruby -ropencode-ruby"
   end
 end
