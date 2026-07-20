@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.1.alpha8 - 2026-07-20
+
+### Fixed
+
+- Parse SSE events with CRLF, CR-only, or LF framing; accept `data:` fields
+  with or without the optional leading space; join multiple `data:` fields;
+  ignore the stream's optional leading UTF-8 BOM and comment fields; and decode
+  correctly when a transport chunk splits any byte of the event framing.
+
+### Changed
+
+- Test Ruby 3.2, 3.3, 3.4, and 4.0; pin every third-party CI and release
+  action to an exact reviewed commit; and use Ruby 4.0 for release builds.
+- Fail the trusted-publishing job before release when the pushed tag does not
+  match `Opencode::VERSION`.
+
 ## 0.0.1.alpha7 - 2026-07-18
 
 ### Fixed

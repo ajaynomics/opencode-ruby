@@ -386,6 +386,79 @@ class SmokeTest < Minitest::Test
     assert_requested event_stream, times: 1
   end
 
+  def test_stream_events_accepts_standard_sse_framing_variants
+    terminal_event = {
+      type: "session.status",
+      properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+    }
+    connected_data = JSON.pretty_generate(CONNECTED_EVENT).lines(chomp: true)
+      .map { |line| "data: #{line}\r\n" }
+      .join
+    body = ": readiness comment\r\nevent: message\r\n#{connected_data}\r\n" \
+           "data:#{terminal_event.to_json}\r\r"
+
+    event_stream = stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(status: 200, body: body,
+                 headers: { "Content-Type" => "text/event-stream" })
+
+    subscribed_calls = 0
+    event_types = []
+    @client.stream_events(
+      session_id: SESSION_ID,
+      timeout: 1,
+      first_event_timeout: 1,
+      on_subscribed: -> {
+        subscribed_calls += 1
+        true
+      }
+    ) { |event| event_types << event.fetch(:type) }
+
+    assert_equal 1, subscribed_calls
+    assert_equal [ "server.connected", "session.status" ], event_types
+    assert_requested event_stream, times: 1
+  end
+
+  def test_stream_events_handles_a_bom_and_boundaries_split_across_chunks
+    terminal_event = {
+      type: "session.status",
+      properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+    }
+    body = "\uFEFF: initial comment\r\n\r\n" \
+           "data: #{CONNECTED_EVENT.to_json}\r\n\r\n" \
+           "data: #{terminal_event.to_json}\n\n"
+    chunks = body.b.bytes.map { |byte| byte.chr(Encoding::BINARY) }
+
+    response = Net::HTTPOK.new("1.1", "200", "OK")
+    response.define_singleton_method(:read_body) do |&callback|
+      chunks.each(&callback)
+    end
+    http = Object.new
+    http.define_singleton_method(:use_ssl=) { |_value| }
+    http.define_singleton_method(:open_timeout=) { |_value| }
+    http.define_singleton_method(:read_timeout=) { |_value| }
+    http.define_singleton_method(:request) do |_request, &callback|
+      callback.call(response)
+    end
+    http.define_singleton_method(:started?) { false }
+
+    subscribed_calls = 0
+    event_types = []
+    Net::HTTP.stub(:new, ->(_host, _port) { http }) do
+      @client.stream_events(
+        session_id: SESSION_ID,
+        timeout: 1,
+        first_event_timeout: 1,
+        on_subscribed: -> {
+          subscribed_calls += 1
+          true
+        }
+      ) { |event| event_types << event.fetch(:type) }
+    end
+
+    assert_equal 1, subscribed_calls
+    assert_equal [ "server.connected", "session.status" ], event_types
+  end
+
   def test_stream_events_preserves_question_and_permission_wait_state
     events = [
       {

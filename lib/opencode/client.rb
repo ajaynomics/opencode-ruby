@@ -255,6 +255,10 @@ module Opencode
     end
 
     MAX_SSE_BUFFER = 1_048_576 # 1 MB — safety valve against pathological server responses
+    # Keep CRLF atomic so it cannot backtrack into CR + LF and look like a
+    # blank line. SSE also permits bare CR and LF line endings.
+    SSE_EVENT_BOUNDARY = /(?>\r\n|[\r\n]){2}/
+    UTF8_BOM = "\xEF\xBB\xBF".b.freeze
     SSE_RECONNECT_DELAY = 0.1
     TRANSIENT_SSE_ERRORS = [
       EOFError,
@@ -360,6 +364,7 @@ module Opencode
         subscription_ready = on_subscribed.nil?
         begin
           buffer = String.new
+          first_sse_event = true
 
           http.request(request) do |response|
             unless response.is_a?(Net::HTTPSuccess)
@@ -386,9 +391,14 @@ module Opencode
                 raise ServerError, "SSE buffer exceeded #{MAX_SSE_BUFFER} bytes"
               end
 
-              while (idx = buffer.index("\n\n"))
-                raw_event = buffer.slice!(0, idx + 2)
-                event = parse_sse_event(raw_event, session_id)
+              while (boundary = buffer.match(SSE_EVENT_BOUNDARY))
+                raw_event = buffer.slice!(0, boundary.end(0))
+                event = parse_sse_event(
+                  raw_event,
+                  session_id,
+                  allow_bom: first_sse_event
+                )
+                first_sse_event = false
                 next unless event
 
                 unless subscription_ready
@@ -639,11 +649,22 @@ module Opencode
       end
     end
 
-    def parse_sse_event(raw, session_id)
-      data_line = raw.lines.find { |l| l.start_with?("data: ") }
-      return nil unless data_line
+    def parse_sse_event(raw, session_id, allow_bom: false)
+      if allow_bom && raw.b.start_with?(UTF8_BOM)
+        raw = raw.byteslice(UTF8_BOM.bytesize..)
+      end
 
-      json = JSON.parse(data_line.sub("data: ", "").strip, symbolize_names: true)
+      data = raw.split(/\r\n|\r|\n/, -1).filter_map do |line|
+        next if line.start_with?(":")
+
+        field, value = line.split(":", 2)
+        next unless field == "data"
+
+        (value || "").delete_prefix(" ")
+      end
+      return nil if data.empty?
+
+      json = JSON.parse(data.join("\n"), symbolize_names: true)
 
       event_session = json.dig(:properties, :sessionID) ||
                       json.dig(:properties, :info, :sessionID) ||

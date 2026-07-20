@@ -33,6 +33,21 @@ class ReleaseWorkflowTest < Minitest::Test
 
     assert_equal "4.0", setup_ruby.dig("with", "ruby-version")
     assert_equal 1, steps.count { |step| step["uses"] == RELEASE_GEM_ACTION }
+    assert steps.filter_map { |step| step["uses"] }.all? { |uses| uses.match?(/@[0-9a-f]{40}\z/) }
     refute steps.any? { |step| step.fetch("run", "").match?(/\bgem\s+push\b/) }
+  end
+
+  def test_release_tag_must_match_the_gem_version_before_publish
+    steps = push_job.fetch("steps")
+    preflight_index = steps.index { |step| step["name"] == "Verify tag matches gem version" }
+    publish_index = steps.index { |step| step["uses"] == RELEASE_GEM_ACTION }
+
+    refute_nil preflight_index
+    refute_nil publish_index
+    assert_operator preflight_index, :<, publish_index
+
+    preflight = steps.fetch(preflight_index)
+    assert_equal "${{ github.ref_name }}", preflight.dig("env", "RELEASE_TAG")
+    assert_includes preflight.fetch("run"), "unless Opencode::VERSION == expected"
   end
 end
