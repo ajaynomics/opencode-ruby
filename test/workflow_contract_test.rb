@@ -22,9 +22,9 @@ class WorkflowContractTest < Minitest::Test
 
   def test_every_third_party_action_uses_its_reviewed_commit
     action_uses = Dir[File.join(WORKFLOW_DIRECTORY, "*.{yml,yaml}")].sort.flat_map do |path|
-      File.readlines(path).filter_map do |line|
-        line[/^\s*-?\s*uses:\s*([^\s#]+)/, 1]
-      end
+      workflow = YAML.safe_load(File.read(path), aliases: false)
+
+      workflow_uses(workflow)
     end
 
     assert_equal 5, action_uses.length
@@ -34,6 +34,34 @@ class WorkflowContractTest < Minitest::Test
       assert_equal "@", separator
       assert_equal ACTION_PINS.fetch(action), revision
       assert_match(/\A[0-9a-f]{40}\z/, revision)
+    end
+  end
+
+  def test_action_discovery_only_reads_workflow_action_locations
+    workflow = YAML.safe_load(<<~YAML, aliases: false)
+      jobs:
+        reusable:
+          uses: "owner/workflow@revision"
+          with:
+            uses: ordinary-job-input
+        test:
+          steps:
+            - uses: "owner/action@revision"
+              with:
+                uses: ordinary-step-input
+    YAML
+
+    assert_equal %w[owner/workflow@revision owner/action@revision], workflow_uses(workflow)
+  end
+
+  private
+
+  def workflow_uses(node)
+    node.fetch("jobs").values.flat_map do |job|
+      action_uses = job.key?("uses") ? [job.fetch("uses")] : []
+      step_uses = job.fetch("steps", []).filter_map { |step| step["uses"] }
+
+      action_uses.concat(step_uses)
     end
   end
 end
