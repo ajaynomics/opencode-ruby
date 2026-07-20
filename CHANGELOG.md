@@ -8,6 +8,15 @@
   with or without the optional leading space; join multiple `data:` fields;
   ignore the stream's optional leading UTF-8 BOM and comment fields; and decode
   correctly when a transport chunk splits any byte of the event framing.
+- Keep request instrumentation free of query credentials and private workspace
+  paths.
+- Load non-empty todo events and written-file artifacts in standalone Ruby
+  clients.
+- Bound reconnects after an interactive prompt loses its event stream, handle
+  DNS failures as transient stream errors, and map non-404 4xx responses to
+  `BadRequestError` consistently.
+- Retry the Rails recovery recipe with its replacement session and keep
+  exception details out of user-facing message content.
 
 ### Changed
 

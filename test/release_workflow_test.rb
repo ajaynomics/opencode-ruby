@@ -50,4 +50,15 @@ class ReleaseWorkflowTest < Minitest::Test
     assert_equal "${{ github.ref_name }}", preflight.dig("env", "RELEASE_TAG")
     assert_includes preflight.fetch("run"), "unless Opencode::VERSION == expected"
   end
+
+  def test_release_runs_the_test_suite_before_publish
+    steps = push_job.fetch("steps")
+    test_index = steps.index { |step| step["name"] == "Run tests" }
+    publish_index = steps.index { |step| step["uses"] == RELEASE_GEM_ACTION }
+
+    refute_nil test_index
+    refute_nil publish_index
+    assert_operator test_index, :<, publish_index
+    assert_equal "bundle exec rake test", steps.fetch(test_index).fetch("run")
+  end
 end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "timeout"
 
 # End-to-end smoke test of the gem's public surface. Validates that the
 # headline `client.stream(...)` API + Reply::Result + error model + the
@@ -499,6 +500,70 @@ class SmokeTest < Minitest::Test
     assert_equal [ true, false, true, false, false ], wait_states
   end
 
+  def test_prompt_wait_does_not_suspend_timeout_after_disconnect
+    question = {
+      type: "question.asked",
+      properties: { id: "que_1", sessionID: SESSION_ID, questions: [] }
+    }
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(
+        status: 200,
+        body: "data: #{question.to_json}\n\n",
+        headers: { "Content-Type" => "text/event-stream" }
+      ).then.to_raise(Errno::ECONNREFUSED)
+
+    reply = Opencode::Reply.new
+    assert_raises(Opencode::TimeoutError) do
+      Timeout.timeout(0.5) do
+        @client.stream_events(
+          session_id: SESSION_ID,
+          timeout: 0.01,
+          first_event_timeout: 1,
+          reply: reply
+        ) { |event| reply.apply(event) }
+      end
+    end
+  end
+
+  def test_connected_prompt_wait_suspends_timeout_while_events_keep_arriving
+    question = {
+      type: "question.asked",
+      properties: { id: "que_1", sessionID: SESSION_ID, questions: [] }
+    }
+    replied = {
+      type: "question.replied",
+      properties: { requestID: "que_1", sessionID: SESSION_ID, answers: [ [ "yes" ] ] }
+    }
+    idle = {
+      type: "session.status",
+      properties: { sessionID: SESSION_ID, status: { type: "idle" } }
+    }
+
+    response = Net::HTTPOK.new("1.1", "200", "OK")
+    response.define_singleton_method(:read_body) do |&callback|
+      callback.call("data: #{question.to_json}\n\n")
+      sleep 0.02
+      callback.call("data: #{replied.to_json}\n\n")
+      callback.call("data: #{idle.to_json}\n\n")
+    end
+    http = Object.new
+    http.define_singleton_method(:use_ssl=) { |_value| }
+    http.define_singleton_method(:open_timeout=) { |_value| }
+    http.define_singleton_method(:read_timeout=) { |_value| }
+    http.define_singleton_method(:request) { |_request, &callback| callback.call(response) }
+    http.define_singleton_method(:started?) { false }
+
+    reply = Opencode::Reply.new
+    Net::HTTP.stub(:new, ->(_host, _port) { http }) do
+      @client.stream_events(
+        session_id: SESSION_ID,
+        timeout: 0.01,
+        first_event_timeout: 1,
+        reply: reply
+      ) { |event| reply.apply(event) }
+    end
+  end
+
   def test_stream_block_is_optional
     stub_request(:post, "#{BASE}/session/#{SESSION_ID}/prompt_async")
       .to_return(status: 204, body: "")
@@ -543,7 +608,13 @@ class SmokeTest < Minitest::Test
     }
     sse = [
       CONNECTED_EVENT,
-      { type: "todo.updated", properties: { sessionID: SESSION_ID, todos: [] } },
+      {
+        type: "todo.updated",
+        properties: {
+          sessionID: SESSION_ID,
+          todos: [ { content: "Plan", status: "in-progress", priority: "high" } ]
+        }
+      },
       { type: "message.part.updated", properties: { sessionID: SESSION_ID, part: skill_part } },
       { type: "message.part.updated", properties: { sessionID: SESSION_ID, part: task_part } },
       { type: "message.part.delta",
@@ -573,7 +644,31 @@ class SmokeTest < Minitest::Test
 
     assert_equal "SUBAGENT_OK", reply.full_text
     assert_equal %w[todowrite skill task], reply.tool_parts.map { |part| part.fetch("tool") }
+    assert_equal(
+      [ { "content" => "Plan", "status" => "in_progress", "priority" => "high" } ],
+      reply.tool_parts.first.dig("input", "todos")
+    )
     assert_equal "ses_child", reply.tool_parts.last.dig("metadata", "sessionId")
+  end
+
+  def test_write_artifacts_work_in_a_standalone_client
+    response = {
+      parts: [
+        {
+          type: "tool",
+          tool: "write",
+          state: {
+            status: "completed",
+            input: { filePath: "/tmp/report.md", content: "# Report" }
+          }
+        }
+      ]
+    }
+
+    assert_equal(
+      [ { filename: "report.md", content: "# Report", content_type: "text/markdown" } ],
+      Opencode::ResponseParser.extract_artifact_files(response)
+    )
   end
 
   def test_connection_refused_raises_ConnectionError
@@ -594,6 +689,85 @@ class SmokeTest < Minitest::Test
     end
   end
 
+  def test_plain_text_404_preserves_SessionNotFoundError
+    stub_request(:get, "#{BASE}/session/missing/message")
+      .to_return(status: 404, body: "not found", headers: { "Content-Type" => "text/plain" })
+
+    assert_raises(Opencode::SessionNotFoundError) do
+      @client.get_messages("missing")
+    end
+  end
+
+  def test_non_404_client_errors_raise_BadRequestError
+    stub_request(:get, "#{BASE}/session")
+      .to_return(status: 401, body: { error: "unauthorized" }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    assert_raises(Opencode::BadRequestError) { @client.list_sessions }
+  end
+
+  def test_plain_text_client_errors_raise_BadRequestError
+    stub_request(:get, "#{BASE}/session")
+      .to_return(status: 401, body: "unauthorized", headers: { "Content-Type" => "text/plain" })
+
+    assert_raises(Opencode::BadRequestError) { @client.list_sessions }
+  end
+
+  def test_non_object_json_client_errors_raise_BadRequestError
+    [ '"unauthorized"', "[]", "null" ].each do |body|
+      stub_request(:get, "#{BASE}/session")
+        .to_return(status: 401, body: body, headers: { "Content-Type" => "application/json" })
+
+      assert_raises(Opencode::BadRequestError) { @client.list_sessions }
+    end
+  end
+
+  def test_list_questions_uses_the_public_error_hierarchy
+    stub_request(:get, "#{BASE}/question")
+      .to_return(status: 401, body: { error: "unauthorized" }.to_json,
+                 headers: { "Content-Type" => "application/json" })
+
+    assert_raises(Opencode::BadRequestError) { @client.list_questions }
+  end
+
+  def test_stream_retries_socket_errors_until_its_timeout
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_raise(SocketError.new("name resolution failed"))
+
+    assert_raises(Opencode::StaleSessionError) do
+      @client.stream_events(
+        session_id: SESSION_ID,
+        timeout: 1,
+        first_event_timeout: 0.01
+      ) { }
+    end
+  end
+
+  def test_stream_does_not_swallow_socket_errors_from_the_caller_block
+    event = {
+      type: "message.part.updated",
+      properties: {
+        sessionID: SESSION_ID,
+        part: { id: "part_1", type: "text", text: "hello" }
+      }
+    }
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/event(\?.*)?\z})
+      .to_return(
+        status: 200,
+        body: "data: #{event.to_json}\n\n",
+        headers: { "Content-Type" => "text/event-stream" }
+      )
+
+    error = assert_raises(SocketError) do
+      Timeout.timeout(0.5) do
+        @client.stream_events(session_id: SESSION_ID, timeout: 1, first_event_timeout: 1) do
+          raise SocketError, "caller lookup failed"
+        end
+      end
+    end
+    assert_equal "caller lookup failed", error.message
+  end
+
   def test_instrumentation_adapter_receives_request_events
     events = []
     Opencode::Instrumentation.adapter = ->(name, payload, &block) {
@@ -608,6 +782,47 @@ class SmokeTest < Minitest::Test
     @client.health
     assert events.any? { |name, _| name == "opencode.request" },
       "instrumentation adapter must receive opencode.request events"
+  end
+
+  def test_instrumentation_does_not_expose_scoped_query_values
+    events = []
+    Opencode::Instrumentation.adapter = ->(name, payload, &block) {
+      events << [ name, payload ]
+      block.call
+    }
+    client = Opencode::Client.new(
+      base_url: "#{BASE}?token=base-secret",
+      directory: "/private/workspace",
+      workspace: "workspace-secret"
+    )
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/session\?.*})
+      .to_return(status: 200, body: "[]",
+                 headers: { "Content-Type" => "application/json" })
+
+    client.list_sessions
+
+    payload = events.find { |name, _| name == "opencode.request" }.last
+    assert_equal "/session", payload.fetch(:path)
+  end
+
+  def test_list_questions_instrumentation_does_not_expose_scoped_query_values
+    events = []
+    Opencode::Instrumentation.adapter = ->(name, payload, &block) {
+      events << [ name, payload ]
+      block.call
+    }
+    client = Opencode::Client.new(
+      base_url: "#{BASE}?token=base-secret",
+      directory: "/private/workspace",
+      workspace: "workspace-secret"
+    )
+    stub_request(:get, %r{#{Regexp.escape(BASE)}/question\?.*})
+      .to_return(status: 200, body: "[]", headers: { "Content-Type" => "application/json" })
+
+    client.list_questions
+
+    payload = events.find { |name, _| name == "opencode.request" }.last
+    assert_equal "/question", payload.fetch(:path)
   end
 
   def test_Reply_distill_returns_typed_Result

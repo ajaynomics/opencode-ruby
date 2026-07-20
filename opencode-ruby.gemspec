@@ -30,14 +30,10 @@ Gem::Specification.new do |spec|
                %w[README.md LICENSE CHANGELOG.md opencode-ruby.gemspec]
   spec.require_paths = ["lib"]
 
-  # The only runtime dependency is ActiveSupport (NOT Rails). ActiveSupport
-  # is a standalone gem providing the `present?`/`blank?`/`presence`/
-  # `truncate`/`duplicable?` helpers used in this gem's code. It does NOT
-  # pull in ActiveRecord, ActionView, ActionController, Turbo, or any other
-  # Rails-only piece. Most Ruby apps in the wild already have ActiveSupport
-  # transitively via another gem; in the rare case yours doesn't, ~250 LOC
-  # of core_ext is added when this gem installs.
+  # ActiveSupport supplies the small set of core extensions used by the
+  # client without pulling in Rails. Marcel identifies artifact content types.
   spec.add_runtime_dependency "activesupport", ">= 6.1", "< 9.0"
+  spec.add_runtime_dependency "marcel", "~> 1.0"
 
   spec.add_development_dependency "minitest", "~> 5.20"
   spec.add_development_dependency "rake", "~> 13.0"

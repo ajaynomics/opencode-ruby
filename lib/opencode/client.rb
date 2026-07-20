@@ -230,18 +230,12 @@ module Opencode
       request = Net::HTTP::Get.new(uri)
       add_auth_header(request)
 
-      response = Opencode::Instrumentation.instrument("opencode.request", method: request.method, path: request.path) do
+      response = Opencode::Instrumentation.instrument("opencode.request", method: request.method, path: uri.path) do
         http_client.request(request)
       end
 
-      unless response.code.to_i.between?(200, 299)
-        raise ServerError, "list_questions failed: HTTP #{response.code} — #{response.body.to_s[0, 200]}"
-      end
-
-      return [] if response.body.blank?
-      JSON.parse(response.body, symbolize_names: true)
-    rescue JSON::ParserError => e
-      raise ServerError, "list_questions returned invalid JSON: #{e.message}"
+      body = handle_response(response)
+      body.is_a?(Array) ? body : []
     rescue Net::OpenTimeout, Net::ReadTimeout, Net::WriteTimeout => e
       raise TimeoutError, "OpenCode timeout after #{@timeout}s: #{e.message}"
     rescue Errno::ECONNREFUSED, SocketError => e
@@ -267,7 +261,8 @@ module Opencode
       Net::ReadTimeout,
       Errno::ECONNREFUSED,
       Errno::ECONNRESET,
-      Errno::EPIPE
+      Errno::EPIPE,
+      SocketError
     ].freeze
 
     # Opens SSE connection to GET /event, yields parsed events filtered by session_id.
@@ -334,7 +329,7 @@ module Opencode
 
       loop do
         now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        deadline = check_deadline_or_suspend(now, deadline, timeout, reply)
+        deadline = check_deadline(now, deadline, timeout)
 
         # NOTE: first_event_deadline is *not* suspension-eligible. If the agent
         # never gets started we want to fail fast — a session that's blocked on
@@ -361,6 +356,7 @@ module Opencode
         http.read_timeout = 30
 
         subscription_callback_error = nil
+        event_callback_error = nil
         subscription_ready = on_subscribed.nil?
         begin
           buffer = String.new
@@ -448,14 +444,19 @@ module Opencode
                 # that's the whole point: a healthy long wait (user thinking
                 # for 30 minutes) keeps the container warm via heartbeats so
                 # the reaper doesn't kill it mid-wait.
-                on_activity_tick&.call(event)
-                block.call(event)
+                begin
+                  on_activity_tick&.call(event)
+                  block.call(event)
+                rescue StandardError => error
+                  event_callback_error = error
+                  raise
+                end
                 return if terminal_session_event?(event)
               end
             end
           end
         rescue *TRANSIENT_SSE_ERRORS
-          raise if subscription_callback_error
+          raise if subscription_callback_error || event_callback_error
 
           # Treat transport-level SSE disconnects like clean EOF: reconnect
           # until an idle session event, the overall timeout, or first-event
@@ -514,6 +515,11 @@ module Opencode
     # the prompt resolves. Otherwise apply the normal deadline check.
     def check_deadline_or_suspend(now, deadline, timeout, reply)
       return now + timeout if reply&.prompt_blocked?
+
+      check_deadline(now, deadline, timeout)
+    end
+
+    def check_deadline(now, deadline, timeout)
       raise TimeoutError, "SSE stream timed out after #{timeout}s" if now > deadline
 
       deadline
@@ -628,7 +634,7 @@ module Opencode
       add_auth_header(request)
 
       response = nil
-      result = Opencode::Instrumentation.instrument("opencode.request", method: request.method, path: request.path) do
+      result = Opencode::Instrumentation.instrument("opencode.request", method: request.method, path: request.uri.path) do
         response = http_client.request(request)
         handle_response(response)
       end
@@ -680,23 +686,30 @@ module Opencode
     end
 
     def handle_response(response)
-      return {} if response.code.to_i == 204
+      status = response.code.to_i
+      return {} if status == 204
 
-      body = if response.body.present?
-        JSON.parse(response.body, symbolize_names: true)
-      else
-        {}
-      end
+      body = parse_response_body(response, status)
 
-      case response.code.to_i
+      case status
       when 200..299 then body
-      when 400 then raise BadRequestError.new(error_message(body, "Bad request"), response: body)
       when 404 then raise SessionNotFoundError.new(error_message(body, "Session not found"), response: body)
+      when 400..499 then raise BadRequestError.new(error_message(body, "Bad request"), response: body)
       when 500..599 then raise ServerError.new(error_message(body, "Server error"), response: body)
       else raise Error.new("Unexpected response: #{response.code}", response: body)
       end
+    end
+
+    def parse_response_body(response, status)
+      return {} if response.body.blank?
+
+      JSON.parse(response.body, symbolize_names: true)
     rescue JSON::ParserError
-      raise ServerError.new("Invalid JSON from OpenCode (HTTP #{response.code}): #{response.body&.truncate(200)}")
+      if status.between?(200, 299)
+        raise ServerError.new("Invalid JSON from OpenCode (HTTP #{response.code}): #{response.body&.truncate(200)}")
+      end
+
+      { message: response.body.to_s.truncate(200) }
     end
 
     # OpenCode HTTP error bodies use a wrapped shape: { name:, data: { message:, kind?: } }.
@@ -704,6 +717,9 @@ module Opencode
     # `body[:message]` is no longer populated for errors — only `body[:data][:message]`.
     # We read both to keep older mock servers working in tests.
     def error_message(body, fallback)
+      return body.truncate(200) if body.is_a?(String) && body.present?
+      return fallback unless body.is_a?(Hash)
+
       body.dig(:data, :message) || body[:message] || fallback
     end
   end

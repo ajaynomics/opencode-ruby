@@ -128,12 +128,13 @@ class GenerateAssistantReplyJob < ApplicationJob
       end
     rescue Opencode::SessionNotFoundError, Opencode::StaleSessionError
       raise if attempted_recreate
-      message.conversation.recreate_opencode_session!(client)
+      session_id = message.conversation.recreate_opencode_session!(client)
       attempted_recreate = true
       retry
     end
   rescue StandardError => e
-    message&.update!(status: :errored, content: "An error occurred: #{e.message.truncate(200)}")
+    Rails.logger.error(e.full_message)
+    message&.update!(status: :errored, content: "An error occurred. Please try again.")
   end
 
   private
