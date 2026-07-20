@@ -8,7 +8,7 @@ class WorkflowContractTest < Minitest::Test
   WORKFLOW_DIRECTORY = File.join(ROOT, ".github", "workflows")
   TEST_WORKFLOW_PATH = File.join(WORKFLOW_DIRECTORY, "test.yml")
   ACTION_PINS = {
-    "actions/checkout" => "93cb6efe18208431cddfb8368fd83d5badbf9bfd",
+    "actions/checkout" => "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
     "ruby/setup-ruby" => "003a5c4d8d6321bd302e38f6f0ec593f77f06600",
     "rubygems/release-gem" => "052cc82692552de3ef2b81fd670e41d13cba8092"
   }.freeze

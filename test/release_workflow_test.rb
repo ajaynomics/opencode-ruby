@@ -6,6 +6,7 @@ require "yaml"
 class ReleaseWorkflowTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   WORKFLOW_PATH = File.join(ROOT, ".github", "workflows", "release.yml")
+  SETUP_RUBY_ACTION = "ruby/setup-ruby@003a5c4d8d6321bd302e38f6f0ec593f77f06600"
   RELEASE_GEM_ACTION = "rubygems/release-gem@052cc82692552de3ef2b81fd670e41d13cba8092"
 
   def workflow
@@ -28,6 +29,9 @@ class ReleaseWorkflowTest < Minitest::Test
     )
 
     steps = push_job.fetch("steps")
+    setup_ruby = steps.find { |step| step["uses"] == SETUP_RUBY_ACTION }
+
+    assert_equal "4.0", setup_ruby.dig("with", "ruby-version")
     assert_equal 1, steps.count { |step| step["uses"] == RELEASE_GEM_ACTION }
     refute steps.any? { |step| step.fetch("run", "").match?(/\bgem\s+push\b/) }
   end
