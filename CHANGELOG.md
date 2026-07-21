@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.1.alpha8 - 2026-07-20
+## 0.0.1.alpha9 - 2026-07-20
 
 ### Fixed
 
@@ -24,6 +24,13 @@
   action to an exact reviewed commit; and use Ruby 4.0 for release builds.
 - Fail the trusted-publishing job before release when the pushed tag does not
   match `Opencode::VERSION`.
+
+## 0.0.1.alpha8 - 2026-07-20
+
+### Yanked
+
+- Published from the unrepaired alpha8 source by mistake and yanked the same
+  day. Use alpha9, which contains the intended alpha8 fixes and release gates.
 
 ## 0.0.1.alpha7 - 2026-07-18
 

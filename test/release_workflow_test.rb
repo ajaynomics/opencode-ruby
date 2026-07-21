@@ -36,34 +36,25 @@ class ReleaseWorkflowTest < Minitest::Test
     setup_ruby = steps.find { |step| step["uses"] == SETUP_RUBY_ACTION }
 
     assert_equal "4.0", setup_ruby.dig("with", "ruby-version")
+    assert_equal true, setup_ruby.dig("with", "bundler-cache")
     assert_equal 1, steps.count { |step| step["uses"] == RELEASE_GEM_ACTION }
     assert steps.filter_map { |step| step["uses"] }.all? { |uses| uses.match?(/@[0-9a-f]{40}\z/) }
-    refute steps.any? { |step| step.fetch("run", "").match?(/\bgem\s+push\b/) }
+    refute steps.any? { |step| step.key?("run") }
   end
 
   def test_release_tag_must_match_the_gem_version_before_publish
-    steps = push_job.fetch("steps")
-    preflight_index = steps.index { |step| step["name"] == "Verify tag matches gem version" }
-    publish_index = steps.index { |step| step["uses"] == RELEASE_GEM_ACTION }
+    preflight = verify_job.fetch("steps").find { |step| step["name"] == "Verify tag matches gem version" }
 
-    refute_nil preflight_index
-    refute_nil publish_index
-    assert_operator preflight_index, :<, publish_index
-
-    preflight = steps.fetch(preflight_index)
+    refute_nil preflight
     assert_equal "${{ github.ref_name }}", preflight.dig("env", "RELEASE_TAG")
     assert_includes preflight.fetch("run"), "unless Opencode::VERSION == expected"
   end
 
-  def test_release_runs_the_test_suite_before_publish
-    steps = push_job.fetch("steps")
-    test_index = steps.index { |step| step["name"] == "Run tests" }
-    publish_index = steps.index { |step| step["uses"] == RELEASE_GEM_ACTION }
+  def test_verification_job_has_read_only_credentials
+    assert_equal({ "contents" => "read" }, verify_job.fetch("permissions"))
 
-    refute_nil test_index
-    refute_nil publish_index
-    assert_operator test_index, :<, publish_index
-    assert_equal "bundle exec rake test", steps.fetch(test_index).fetch("run")
+    checkout = verify_job.fetch("steps").find { |step| step.fetch("uses", "").start_with?("actions/checkout@") }
+    assert_equal false, checkout.dig("with", "persist-credentials")
   end
 
   def test_release_verifies_the_supported_matrix_and_installed_gem_before_publish
@@ -73,7 +64,11 @@ class ReleaseWorkflowTest < Minitest::Test
     commands = verify_job.fetch("steps").filter_map { |step| step["run"] }.join("\n")
     assert_includes commands, "bundle exec rake test"
     assert_includes commands, "gem build opencode-ruby.gemspec"
-    assert_includes commands, "gem install opencode-ruby-*.gem --no-document"
+    assert_includes commands, "bundle exec ruby -e"
+    assert_includes commands, 'GEM_HOME="${RUNNER_TEMP}/opencode-ruby-${{ matrix.ruby }}"'
+    assert_includes commands, 'gem_file="opencode-ruby-$(ruby -Ilib -ropencode/version'
+    assert_includes commands, 'gem install --local "$gem_file" --no-document'
+    assert_includes commands, "Gem.loaded_specs.fetch(\"opencode-ruby\").full_gem_path"
     assert_includes commands, "ruby -ropencode-ruby"
   end
 end

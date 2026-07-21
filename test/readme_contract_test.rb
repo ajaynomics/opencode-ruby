@@ -13,7 +13,9 @@ class ReadmeContractTest < Minitest::Test
   end
 
   def test_release_guidance_does_not_claim_trusted_publishing_is_configured
-    assert_includes README, "not configured as of `0.0.1.alpha7`"
+    assert_includes README, "`0.0.1.alpha8` package contained unrepaired source"
+    assert_includes README, "was yanked"
+    assert_includes README, "registration is not confirmed for alpha9"
     assert_includes README, "does not currently guarantee publication"
   end
 

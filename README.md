@@ -237,13 +237,14 @@ The smoke suite covers Client end-to-end against WebMock-stubbed OpenCode
 endpoints, including subscription-before-prompt ordering and
 reconnect-without-repost.
 
-The repository contains a tag-triggered `release.yml` workflow intended for
-RubyGems trusted publishing, but its RubyGems trusted-publisher registration is
-not configured as of `0.0.1.alpha7`; that release was published manually. A
-`v*` tag push therefore does not currently guarantee publication. Before a
-future release, verify the RubyGems registry result explicitly. Once the
-workflow is registered as a trusted publisher for the `release` environment,
-it can build, attest, and publish without a long-lived RubyGems API key.
+The mistakenly published `0.0.1.alpha8` package contained unrepaired source and
+was yanked; use `0.0.1.alpha9` or later. The repository contains a tag-triggered
+`release.yml` workflow intended for RubyGems trusted publishing, but its
+trusted-publisher registration is not confirmed for alpha9. A `v*` tag push
+therefore does not currently guarantee publication. Before a future release,
+verify the RubyGems registry result explicitly. Once the workflow is registered
+as a trusted publisher for the `release` environment, it can build, attest, and
+publish without a long-lived RubyGems API key.
 
 ## License
 

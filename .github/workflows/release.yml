@@ -8,18 +8,31 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         ruby: ["3.2", "3.3", "3.4", "4.0"]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Ruby ${{ matrix.ruby }}
         uses: ruby/setup-ruby@003a5c4d8d6321bd302e38f6f0ec593f77f06600 # v1.319.0
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
+
+      - name: Verify tag matches gem version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          ruby -Ilib -ropencode/version -e
+          'expected = ENV.fetch("RELEASE_TAG").delete_prefix("v");
+          abort "tag #{expected.inspect} does not match gem #{Opencode::VERSION.inspect}"
+          unless Opencode::VERSION == expected'
 
       - name: Run tests
         run: bundle exec rake test
@@ -29,8 +42,18 @@ jobs:
 
       - name: Verify gem loads after install
         run: |
-          gem install opencode-ruby-*.gem --no-document
-          ruby -ropencode-ruby -e 'puts Opencode::VERSION'
+          bundle_gem_path="$(bundle exec ruby -e 'puts Gem.path.join(":")')"
+          export GEM_HOME="${RUNNER_TEMP}/opencode-ruby-${{ matrix.ruby }}"
+          export GEM_PATH="${GEM_HOME}:${bundle_gem_path}"
+          mkdir -p "$GEM_HOME"
+          gem_file="opencode-ruby-$(ruby -Ilib -ropencode/version -e 'print Opencode::VERSION').gem"
+          gem install --local "$gem_file" --no-document
+          ruby -ropencode-ruby -e '
+            root = File.realpath(ENV.fetch("GEM_HOME"))
+            path = File.realpath(Gem.loaded_specs.fetch("opencode-ruby").full_gem_path)
+            abort "opencode-ruby loaded outside isolated GEM_HOME: #{path}" unless path.start_with?("#{root}/")
+            puts Opencode::VERSION
+          '
 
   push:
     needs: verify
@@ -48,14 +71,4 @@ jobs:
         with:
           ruby-version: "4.0"
           bundler-cache: true
-      - name: Verify tag matches gem version
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: >-
-          ruby -Ilib -ropencode/version -e
-          'expected = ENV.fetch("RELEASE_TAG").delete_prefix("v");
-          abort "tag #{expected.inspect} does not match gem #{Opencode::VERSION.inspect}"
-          unless Opencode::VERSION == expected'
-      - name: Run tests
-        run: bundle exec rake test
       - uses: rubygems/release-gem@052cc82692552de3ef2b81fd670e41d13cba8092 # v1.4.0
