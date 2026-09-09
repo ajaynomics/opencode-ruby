@@ -33,7 +33,13 @@ Gem::Specification.new do |spec|
   # ActiveSupport supplies the small set of core extensions used by the
   # client without pulling in Rails. Marcel identifies artifact content types.
   spec.add_runtime_dependency "activesupport", ">= 6.1", "< 9.0"
-  spec.add_runtime_dependency "marcel", "~> 1.0"
+  # Rails edge moved activestorage to marcel ~> 2.0, and this gem is loaded
+  # alongside it in applications that track edge. marcel 2 requires Ruby >= 3.3
+  # while this gem supports >= 3.2, so the bound is a permissive range rather
+  # than a bump: consumers on 3.3+ resolve marcel 2, consumers on 3.2 resolve
+  # marcel 1, and neither is forced. The single call site,
+  # Marcel::MimeType.for(extension:), is identical in both majors.
+  spec.add_runtime_dependency "marcel", ">= 1.0", "< 3"
 
   # minitest 6 removed minitest/mock; Object#stub now ships in the extracted
   # minitest-mock gem, which the suite uses to stub Net::HTTP, File and Tempfile.
