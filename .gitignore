@@ -6,3 +6,4 @@ tmp/
 .ruby-version
 .byebug_history
 coverage/
+vendor/

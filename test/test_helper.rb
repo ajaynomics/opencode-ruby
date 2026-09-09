@@ -4,6 +4,7 @@ $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "opencode-ruby"
 require "minitest/autorun"
+require "minitest/mock"
 require "webmock/minitest"
 
 # Tests run against WebMock-stubbed endpoints; never hit the network.
